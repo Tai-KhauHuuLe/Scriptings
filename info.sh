@@ -152,6 +152,15 @@ emit_header() {
     echo "========================================"
     ls -la /boot
 
+    echo
+    echo "========================================"
+    echo "SUBSCRIPTION MANAGER STATUS"
+    echo "========================================"
+    subscription-manager identity
+    subscription-manager status
+    subscription-manager list
+    subscription-manager list --consumed
+
 } > "$OUTPUT_DIR/01-host-kernel.txt" 2>&1
 
 # ---------------------------------------------------------------------------
@@ -200,6 +209,9 @@ emit_header() {
     du -xh / --max-depth=1 2>/dev/null | sort -hr
     du -xh /var --max-depth=1 2>/dev/null | sort -hr
     du -xh /opt --max-depth=1 2>/dev/null | sort -hr
+    du -xh /boot --max-depth=1 2>/dev/null | sort -hr ## need to check if dir is full or not
+    ## add dependency check must have before patch, 
+    ## disk, repo, ssh, network dns resolver, boot, yum/dnf repo, mcafee,......
 
 } > "$OUTPUT_DIR/02-storage.txt" 2>&1
 
@@ -290,8 +302,7 @@ emit_header() {
     echo "========================================"
     echo "SSH CONFIGURATION"
     echo "========================================"
-    grep -i PermitRootLogin /etc/ssh/sshd_config
-    grep -i PasswordAuthentication /etc/ssh/sshd_config
+    cat /etc/ssh/sshd_config
 
     echo
     echo "========================================"
