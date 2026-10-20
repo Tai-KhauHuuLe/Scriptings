@@ -19,23 +19,33 @@ case "$OUTPUT_DIR" in
         ;;
 esac
 
-OUTPUT_FILE="${OUTPUT_DIR}/info.txt"
-
 # Create the selected directory if it does not exist
 if ! mkdir -p "$OUTPUT_DIR"; then
     echo "Error: Unable to create directory: $OUTPUT_DIR"
     exit 1
 fi
 
-# Create a new report for each execution.
-# Change > to >> if you want to append to an existing report.
-{
+# Emit the common report header to stdout.
+# Each group block redirects stdout to its own part file, so the header
+# is written into that part file automatically.
+emit_header() {
     echo "Patch validation report"
     echo "Collection type : $OUTPUT_DIR"
     echo "Collection date : $(date '+%Y-%m-%d %H:%M:%S %Z')"
     echo "Executed by     : $(whoami)"
     echo
+    echo "========================================"
+    echo "$1"
+    echo "========================================"
+}
 
+# ---------------------------------------------------------------------------
+# Group 1: Host & Kernel
+# ---------------------------------------------------------------------------
+{
+    emit_header "HOST & KERNEL"
+
+    echo
     echo "========================================"
     echo "HOSTNAME"
     echo "========================================"
@@ -95,6 +105,20 @@ fi
 
     echo
     echo "========================================"
+    echo "/BOOT DIRECTORY"
+    echo "========================================"
+    ls -la /boot
+
+} > "$OUTPUT_DIR/01-host-kernel.txt" 2>&1
+
+# ---------------------------------------------------------------------------
+# Group 2: Storage
+# ---------------------------------------------------------------------------
+{
+    emit_header "STORAGE"
+
+    echo
+    echo "========================================"
     echo "LOGs and LIBs"
     echo "========================================"
     ls -al /var/lib
@@ -127,6 +151,22 @@ fi
 
     echo
     echo "========================================"
+    echo "TOP DISK CONSUMERS"
+    echo "========================================"
+    du -xh / --max-depth=1 2>/dev/null | sort -hr
+    du -xh /var --max-depth=1 2>/dev/null | sort -hr
+    du -xh /opt --max-depth=1 2>/dev/null | sort -hr
+
+} > "$OUTPUT_DIR/02-storage.txt" 2>&1
+
+# ---------------------------------------------------------------------------
+# Group 3: Resources
+# ---------------------------------------------------------------------------
+{
+    emit_header "RESOURCES"
+
+    echo
+    echo "========================================"
     echo "MEMORY UTILIZATION"
     echo "========================================"
     free -h
@@ -143,6 +183,14 @@ fi
     echo "========================================"
     lscpu
     nproc
+
+} > "$OUTPUT_DIR/03-resources.txt" 2>&1
+
+# ---------------------------------------------------------------------------
+# Group 4: Networking
+# ---------------------------------------------------------------------------
+{
+    emit_header "NETWORKING"
 
     echo "========================================"
     echo "ETHERNET INTERFACE STATUS"
@@ -166,6 +214,14 @@ fi
     echo "DNS CONFIGURATION"
     echo "========================================"
     cat /etc/resolv.conf
+
+} > "$OUTPUT_DIR/04-network.txt" 2>&1
+
+# ---------------------------------------------------------------------------
+# Group 5: Security
+# ---------------------------------------------------------------------------
+{
+    emit_header "SECURITY"
 
     echo
     echo "========================================"
@@ -193,6 +249,14 @@ fi
     echo "LISTENING PORTS"
     echo "========================================"
     ss -tulpn
+
+} > "$OUTPUT_DIR/05-security.txt" 2>&1
+
+# ---------------------------------------------------------------------------
+# Group 6: Services
+# ---------------------------------------------------------------------------
+{
+    emit_header "SERVICES"
 
     echo
     echo "========================================"
@@ -227,29 +291,23 @@ fi
 
     echo
     echo "========================================"
-    echo "/BOOT DIRECTORY"
+    echo "FAILED SYSTEMD UNITS"
     echo "========================================"
-    ls -la /boot
+    systemctl --failed --no-pager
 
-    echo
-    echo "========================================"
-    echo "TOP DISK CONSUMERS"
-    echo "========================================"
-    du -xh / --max-depth=1 2>/dev/null | sort -hr
-    du -xh /var --max-depth=1 2>/dev/null | sort -hr
-    du -xh /opt --max-depth=1 2>/dev/null | sort -hr
+} > "$OUTPUT_DIR/06-services.txt" 2>&1
+
+# ---------------------------------------------------------------------------
+# Group 7: Packages
+# ---------------------------------------------------------------------------
+{
+    emit_header "PACKAGES"
 
     echo
     echo "========================================"
     echo "INSTALLONLY PACKAGES"
     echo "========================================"
     dnf repoquery --installonly --latest-limit=-1
-
-    echo
-    echo "========================================"
-    echo "FAILED SYSTEMD UNITS"
-    echo "========================================"
-    systemctl --failed --no-pager
 
     echo
     echo "========================================"
@@ -268,6 +326,20 @@ fi
     echo "UNNEEDED PACKAGES"
     echo "========================================"
     dnf repoquery --unneeded
+
+    echo
+    echo "========================================"
+    echo "Installed packages full list"
+    echo "========================================"
+    rpm -qa --last
+
+} > "$OUTPUT_DIR/07-packages.txt" 2>&1
+
+# ---------------------------------------------------------------------------
+# Group 8: Runtime
+# ---------------------------------------------------------------------------
+{
+    emit_header "RUNTIME"
 
     echo
     echo "========================================"
@@ -309,11 +381,6 @@ fi
     python3 --version 2>/dev/null
 
     echo "========================================"
-    echo "Installed packages full list"
-    echo "========================================"
-    rpm -qa --last
-
-    echo "========================================"
     echo "Check cron job"
     echo "========================================"
     for user in $(cut -f1 -d: /etc/passwd); do echo "=== User: $user ==="; sudo crontab -u "$user" -l 2>/dev/null; done
@@ -328,15 +395,31 @@ fi
     echo "END OF REPORT"
     echo "========================================"
 
-} > "$OUTPUT_FILE" 2>&1
+} > "$OUTPUT_DIR/08-runtime.txt" 2>&1
 
-SCRIPT_RC=$?
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
+PART_FILES=(
+    "$OUTPUT_DIR/01-host-kernel.txt"
+    "$OUTPUT_DIR/02-storage.txt"
+    "$OUTPUT_DIR/03-resources.txt"
+    "$OUTPUT_DIR/04-network.txt"
+    "$OUTPUT_DIR/05-security.txt"
+    "$OUTPUT_DIR/06-services.txt"
+    "$OUTPUT_DIR/07-packages.txt"
+    "$OUTPUT_DIR/08-runtime.txt"
+)
 
-if [[ $SCRIPT_RC -eq 0 ]]; then
-    echo "Information successfully collected."
-    echo "Report: $OUTPUT_FILE"
-else
-    echo "The script completed with an error."
-    echo "Review: $OUTPUT_FILE"
-    exit "$SCRIPT_RC"
-fi
+echo "Information successfully collected."
+echo "Reports written to: $OUTPUT_DIR"
+echo
+printf "%-30s %12s\n" "PART FILE" "SIZE"
+printf "%-30s %12s\n" "---------" "----"
+for f in "${PART_FILES[@]}"; do
+    if [[ -s "$f" ]]; then
+        printf "%-30s %12s\n" "$(basename "$f")" "$(du -h "$f" | cut -f1)"
+    else
+        printf "%-30s %12s\n" "$(basename "$f")" "MISSING"
+    fi
+done
