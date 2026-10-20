@@ -26,8 +26,6 @@ if ! mkdir -p "$OUTPUT_DIR"; then
 fi
 
 # Emit the common report header to stdout.
-# Each group block redirects stdout to its own part file, so the header
-# is written into that part file automatically.
 emit_header() {
     echo "Patch validation report"
     echo "Collection type : $OUTPUT_DIR"
@@ -38,6 +36,51 @@ emit_header() {
     echo "$1"
     echo "========================================"
 }
+
+# ---------------------------------------------------------------------------
+# Group 0: Hardware
+# ---------------------------------------------------------------------------
+{
+    emit_header "HARDWARE & DEVICES"
+
+    echo "========================================"
+    echo "PCI DEVICES"
+    echo "========================================"
+    lspci -vv 2>/dev/null || lspci
+
+    echo
+    echo "========================================"
+    echo "HARDWARE INVENTORY"
+    echo "========================================"
+    lshw -short 2>/dev/null || lshw
+
+    echo
+    echo "========================================"
+    echo "DKMS STATUS"
+    echo "========================================"
+    if command -v dkms >/dev/null 2>&1; then
+        dkms status
+    else
+        echo "dkms command is not available."
+    fi
+    
+    echo
+    echo "========================================"
+    echo "GPU STATUS"
+    echo "========================================"
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        nvidia-smi
+    else
+        echo "nvidia-smi is not available."
+    fi
+
+    echo
+    echo "========================================"
+    echo "LOADED KERNEL MODULES"
+    echo "========================================"
+    lsmod
+
+} > "$OUTPUT_DIR/00-hardware.txt" 2>&1
 
 # ---------------------------------------------------------------------------
 # Group 1: Host & Kernel
@@ -139,6 +182,7 @@ emit_header() {
     mount
 
     echo
+    echo "========================================"
     echo "FSTAB"
     echo "========================================"
     cat /etc/fstab
@@ -172,6 +216,7 @@ emit_header() {
     free -h
 
     echo
+    echo "========================================"
     echo "SWAP INFORMATION"
     echo "========================================"
     cat /proc/swaps
@@ -198,6 +243,16 @@ emit_header() {
     ip -br link
     nmcli device status
 
+    echo "========================================"
+    echo "NETWORK CONNECTIONS"
+    echo "========================================"
+    nmcli connection show
+
+    echo "========================================"
+    echo "NETWORK DEVICE DETAILS"
+    echo "========================================"
+    nmcli device show
+
     echo
     echo "========================================"
     echo "IP ADDRESS"
@@ -205,6 +260,7 @@ emit_header() {
     ip addr
 
     echo
+    echo "========================================"
     echo "ROUTING TABLE"
     echo "========================================"
     ip route
@@ -214,6 +270,7 @@ emit_header() {
     echo "DNS CONFIGURATION"
     echo "========================================"
     cat /etc/resolv.conf
+    resolvectl status
 
 } > "$OUTPUT_DIR/04-network.txt" 2>&1
 
@@ -250,6 +307,14 @@ emit_header() {
     echo "========================================"
     ss -tulpn
 
+    echo
+    echo "========================================"
+    echo "SELinux status"
+    echo "========================================"
+    sestatus
+    getenforce
+    grep ^SELINUX= /etc/selinux/config
+
 } > "$OUTPUT_DIR/05-security.txt" 2>&1
 
 # ---------------------------------------------------------------------------
@@ -263,18 +328,6 @@ emit_header() {
     echo "RUNNING SERVICES"
     echo "========================================"
     systemctl list-units --type=service --state=running --no-pager
-
-    echo
-    echo "========================================"
-    echo "IMPORTANT SERVICE STATUS"
-    echo "========================================"
-
-    # Uncomment services as required
-    systemctl status wazuh-agent --no-pager
-    systemctl status sssd.service --no-pager
-    systemctl status sshd.service --no-pager
-    systemctl status docker.service --no-pager
-    systemctl status containerd.service --no-pager
 
     echo
     echo "========================================"
@@ -295,6 +348,15 @@ emit_header() {
     echo "========================================"
     systemctl --failed --no-pager
 
+    echo
+    echo "========================================"
+    echo "ALL SERVICEs STATUS"
+    echo "========================================"
+    for svc in $(systemctl list-units --type=service --state=running --no-legend --no-pager --plain | awk '{print $1}'); do
+        echo "--- $svc ---"
+        systemctl status "$svc" --no-pager --lines=10 2>/dev/null
+    done
+
 } > "$OUTPUT_DIR/06-services.txt" 2>&1
 
 # ---------------------------------------------------------------------------
@@ -302,6 +364,19 @@ emit_header() {
 # ---------------------------------------------------------------------------
 {
     emit_header "PACKAGES"
+
+    echo
+    echo "========================================"
+    echo "REPOSITORY LIST"
+    echo "========================================"
+    ls -la /etc/yum.repos.d
+    dnf repolist --all
+
+    echo
+    echo "========================================"
+    echo "MODULES LIST"
+    echo "========================================"
+    dnf module list
 
     echo
     echo "========================================"
@@ -386,8 +461,9 @@ emit_header() {
     for user in $(cut -f1 -d: /etc/passwd); do echo "=== User: $user ==="; sudo crontab -u "$user" -l 2>/dev/null; done
 
     echo "========================================"
-    echo "Sysctl information"
+    echo "Sysctl information and limits"
     echo "========================================"
+    ulimit -a
     sysctl -a
 
     echo
@@ -398,9 +474,73 @@ emit_header() {
 } > "$OUTPUT_DIR/08-runtime.txt" 2>&1
 
 # ---------------------------------------------------------------------------
+# Group 9: Users, Groups, Sudoers
+# ---------------------------------------------------------------------------
+{
+    emit_header "USERS, GROUPS, SUDOERS"
+
+    echo "========================================"
+    echo "USERS"
+    echo "========================================"
+    cat /etc/passwd
+
+    echo
+    echo "========================================"
+    echo "GROUPS"
+    echo "========================================"
+    cat /etc/group
+
+    echo
+    echo "========================================"
+    echo "USER ACCOUNTS WITH LOGIN SHELL"
+    echo "========================================"
+    getent passwd | awk -F: '$7 ~ /bash|sh$/ {print}'
+
+    echo
+    echo "========================================"
+    echo "SUDOERS"
+    echo "========================================"
+    cat /etc/sudoers
+    ls -al /etc/sudoers.d/
+    for f in /etc/sudoers.d/*; do echo "--- $f ---"; cat "$f" 2>/dev/null; done
+
+    echo
+    echo "========================================"
+    echo "CURRENT USERS LOGGED IN"
+    echo "========================================"
+    who
+    lastlog
+
+    echo
+    echo "========================================"
+    echo "FOLDER PERMISSIONS"
+    echo "========================================"
+    ls -ld / /home /var /opt /etc /usr /tmp
+    ls -la /home
+
+} > "$OUTPUT_DIR/09-users-groups-sudoers.txt" 2>&1
+
+# ---------------------------------------------------------------------------
+# Group 10: Folder Permissions
+# ---------------------------------------------------------------------------
+{
+    echo "========================================"
+    echo "FOLDER PERMISSIONS"
+    echo "========================================"
+    df -hP | awk 'NR>1 {print $NF}' | while read -r mp; do
+        echo "===== $mp ====="
+        stat -c '%A %a %U:%G %n' "$mp"
+        find "$mp" -mindepth 1 -maxdepth 1 -type d \
+            -exec stat -c '%A %a %U:%G %n' {} \; 2>/dev/null
+    done
+
+} > "$OUTPUT_DIR/10-folder-permissions.txt" 2>&1
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 PART_FILES=(
+    "$OUTPUT_DIR/00-hardware.txt"
     "$OUTPUT_DIR/01-host-kernel.txt"
     "$OUTPUT_DIR/02-storage.txt"
     "$OUTPUT_DIR/03-resources.txt"
@@ -409,6 +549,8 @@ PART_FILES=(
     "$OUTPUT_DIR/06-services.txt"
     "$OUTPUT_DIR/07-packages.txt"
     "$OUTPUT_DIR/08-runtime.txt"
+    "$OUTPUT_DIR/09-users-groups-sudoers.txt"
+    "$OUTPUT_DIR/10-folder-permissions.txt"
 )
 
 echo "Information successfully collected."
